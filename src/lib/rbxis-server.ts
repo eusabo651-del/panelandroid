@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
 
 export type SessionRole = "user" | "admin";
@@ -8,6 +8,7 @@ export type AppSession = {
   licenseId?: string;
   deviceId?: string;
   username?: string;
+  adminIp?: string;
 };
 
 export type MockKey = {
@@ -29,9 +30,24 @@ export type MockKey = {
   cleanActive: boolean;
 };
 
+export type AdminIpLogin = {
+  id: string;
+  ip: string;
+  firstSeenAt: number;
+  lastLoginAt: number;
+  blocked: boolean;
+};
+
+type RawRecord = Record<string, unknown>;
+type AdminIpState = Omit<AdminIpLogin, "id">;
+
 export const SESSION_COOKIE = "rbxis_session_v3";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const MOCKAPI_URL = (process.env.MOCKAPI_KEYS_URL?.trim() || "https://6ac92b96fd7c536b1bda8e99.mockapi.io/androidkeys").replace(/\/$/, "");
+const SYSTEM_KEY_PREFIX = "__PURPOU_SYSTEM_V1__";
+const NOTICE_RECORD_KEY = `${SYSTEM_KEY_PREFIX}GLOBAL_NOTICE`;
+const ADMIN_IP_RECORD_PREFIX = `${SYSTEM_KEY_PREFIX}ADMIN_IP_`;
+const ADMIN_IP_LABEL = "Endereços de login administrativo";
 
 function sessionSecret() {
   return process.env.RBXIS_SESSION_SECRET?.trim() || "";
@@ -43,6 +59,30 @@ export function hasSessionSecret() {
 
 function sign(encoded: string) {
   return createHmac("sha256", sessionSecret()).update(encoded).digest("base64url");
+}
+
+function encryptionKey() {
+  if (!hasSessionSecret()) throw new Error("RBXIS_SESSION_SECRET não configurado ou inválido");
+  return createHash("sha256").update("purpou-system-records-v1:").update(sessionSecret()).digest();
+}
+
+function seal(value: string) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  return `v1.${Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64url")}`;
+}
+
+function unseal(value: string) {
+  if (!value.startsWith("v1.")) return "";
+  const packed = Buffer.from(value.slice(3), "base64url");
+  if (packed.length < 28) return "";
+  const iv = packed.subarray(0, 12);
+  const tag = packed.subarray(12, 28);
+  const ciphertext = packed.subarray(28);
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
 export function createSessionToken(session: Omit<AppSession, "expiresAt">) {
@@ -91,6 +131,12 @@ export function safeEqual(left: string, right: string) {
   return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 
+export function getClientIp(request: NextRequest) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const candidate = forwarded || request.headers.get("x-real-ip")?.trim() || request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+  return candidate.slice(0, 100);
+}
+
 async function mockRequest<T>(path = "", init?: RequestInit): Promise<T> {
   const response = await fetch(`${MOCKAPI_URL}${path}`, {
     ...init,
@@ -110,7 +156,128 @@ function toNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-export function normalizeKey(row: Record<string, unknown>): MockKey {
+function isSystemRecord(row: RawRecord) {
+  return String(row.key ?? "").startsWith(SYSTEM_KEY_PREFIX);
+}
+
+async function listRawRecords(): Promise<RawRecord[]> {
+  const all: RawRecord[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const batch = await mockRequest<RawRecord[]>(`?page=${page}&limit=100`);
+    if (!Array.isArray(batch)) throw new Error("Resposta inesperada da MockAPI.");
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
+
+async function findRawRecord(key: string) {
+  const matches = await mockRequest<RawRecord[]>(`?key=${encodeURIComponent(key)}`);
+  if (!Array.isArray(matches)) throw new Error("Resposta inesperada da MockAPI.");
+  return matches.find((record) => record.key === key);
+}
+
+async function upsertSystemRecord(key: string, fields: { device: string; status?: string }) {
+  const existing = await findRawRecord(key);
+  const now = Math.floor(Date.now() / 1000);
+  const row: RawRecord = {
+    key,
+    username: ADMIN_IP_LABEL,
+    used: true,
+    device: fields.device,
+    expire: 0,
+    type: "system",
+    createdAt: existing ? toNumber(existing.createdAt) || now : now,
+    activatedAt: now,
+    expiresAt: 0,
+    status: fields.status ?? "active",
+    onlineAt: now,
+  };
+  if (existing?.id) return mockRequest<RawRecord>(`/${encodeURIComponent(String(existing.id))}`, { method: "PATCH", body: JSON.stringify(row) });
+  return mockRequest<RawRecord>("", { method: "POST", body: JSON.stringify(row) });
+}
+
+function adminIpRecordKey(ip: string) {
+  return `${ADMIN_IP_RECORD_PREFIX}${createHash("sha256").update(ip).digest("hex")}`;
+}
+
+async function readAdminIpRecord(record: RawRecord): Promise<AdminIpLogin | null> {
+  try {
+    const state = JSON.parse(unseal(String(record.device ?? ""))) as AdminIpState;
+    if (!state || typeof state.ip !== "string" || !state.ip) return null;
+    return { id: String(record.id ?? ""), ip: state.ip, firstSeenAt: toNumber(state.firstSeenAt), lastLoginAt: toNumber(state.lastLoginAt), blocked: Boolean(state.blocked) };
+  } catch {
+    return null;
+  }
+}
+
+export async function registerAdminLogin(ip: string) {
+  const key = adminIpRecordKey(ip);
+  const existing = await findRawRecord(key);
+  let current: AdminIpState | undefined;
+  if (existing) {
+    try { current = JSON.parse(unseal(String(existing.device ?? ""))) as AdminIpState; } catch { current = undefined; }
+  }
+  if (current?.blocked) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const state: AdminIpState = { ip, firstSeenAt: current?.firstSeenAt || now, lastLoginAt: now, blocked: false };
+  const encrypted = seal(JSON.stringify(state));
+  const row: RawRecord = { key, username: ADMIN_IP_LABEL, used: true, device: encrypted, expire: 0, type: "system", createdAt: state.firstSeenAt, activatedAt: now, expiresAt: 0, status: "active", onlineAt: now };
+  if (existing?.id) await mockRequest(`/${encodeURIComponent(String(existing.id))}`, { method: "PATCH", body: JSON.stringify(row) });
+  else await mockRequest("", { method: "POST", body: JSON.stringify(row) });
+  return true;
+}
+
+export async function isAdminIpAllowed(ip: string) {
+  if (!ip) return false;
+  const key = adminIpRecordKey(ip);
+  const record = await findRawRecord(key);
+  if (!record) return false;
+  const state = await readAdminIpRecord(record);
+  return Boolean(state && !state.blocked);
+}
+
+export async function hasAuthorizedAdminSession(request: NextRequest) {
+  const session = sessionFromRequest(request);
+  if (!session || session.role !== "admin" || !session.adminIp) return false;
+  try { return await isAdminIpAllowed(session.adminIp); } catch { return false; }
+}
+
+export async function listAdminIpLogins() {
+  const rows = (await listRawRecords()).filter((record) => String(record.key ?? "").startsWith(ADMIN_IP_RECORD_PREFIX));
+  const entries = (await Promise.all(rows.map(readAdminIpRecord))).filter((entry): entry is AdminIpLogin => Boolean(entry));
+  return entries.sort((a, b) => b.lastLoginAt - a.lastLoginAt);
+}
+
+export async function setAdminIpBlocked(ip: string, blocked: boolean) {
+  const entries = await listAdminIpLogins();
+  const current = entries.find((entry) => entry.ip === ip);
+  if (!current) throw new Error("Endereço IP não encontrado.");
+  if (blocked && !current.blocked && entries.filter((entry) => !entry.blocked).length <= 1) {
+    throw new Error("Mantenha pelo menos um IP liberado para evitar bloquear o único acesso administrativo.");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const state: AdminIpState = { ip, firstSeenAt: current.firstSeenAt, lastLoginAt: current.lastLoginAt, blocked };
+  const encrypted = seal(JSON.stringify(state));
+  const key = adminIpRecordKey(ip);
+  const row = await findRawRecord(key);
+  if (!row?.id) throw new Error("Registro de IP não encontrado.");
+  await mockRequest(`/${encodeURIComponent(String(row.id))}`, { method: "PATCH", body: JSON.stringify({ device: encrypted, status: blocked ? "blocked" : "active", onlineAt: now }) });
+  return { ...current, blocked };
+}
+
+export async function getGlobalNotice() {
+  const record = await findRawRecord(NOTICE_RECORD_KEY);
+  return typeof record?.device === "string" ? record.device.slice(0, 500) : "";
+}
+
+export async function setGlobalNotice(message: string) {
+  const value = message.trim().slice(0, 500);
+  await upsertSystemRecord(NOTICE_RECORD_KEY, { device: value });
+  return value;
+}
+
+export function normalizeKey(row: RawRecord): MockKey {
   const rawStatus = String(row.status ?? "").toLowerCase();
   const status = rawStatus === "blocked" ? "blocked" : rawStatus === "revoked" ? "revoked" : !rawStatus || rawStatus === "active" ? "active" : "revoked";
   return {
@@ -134,29 +301,25 @@ export function normalizeKey(row: Record<string, unknown>): MockKey {
 }
 
 export async function listKeys(): Promise<MockKey[]> {
-  const all: Record<string, unknown>[] = [];
-  for (let page = 1; page <= 100; page++) {
-    const batch = await mockRequest<Record<string, unknown>[]>(`?page=${page}&limit=100`);
-    all.push(...batch);
-    if (batch.length < 100) break;
-  }
-  return all.map(normalizeKey);
+  return (await listRawRecords()).filter((row) => !isSystemRecord(row)).map(normalizeKey);
 }
 
 export async function getKeyById(id: string) {
   try {
-    return normalizeKey(await mockRequest<Record<string, unknown>>(`/${encodeURIComponent(id)}`));
+    const record = await mockRequest<RawRecord>(`/${encodeURIComponent(id)}`);
+    if (isSystemRecord(record)) return undefined;
+    return normalizeKey(record);
   } catch {
     return undefined;
   }
 }
 
 export async function updateKey(id: string, patch: Partial<MockKey>) {
-  const row: Record<string, unknown> = {};
+  const row: RawRecord = {};
   for (const field of ["key", "username", "used", "device", "expire", "type", "createdAt", "activatedAt", "expiresAt", "status", "onlineAt", "removerTremedeiraActive", "estabilizarMiraActive", "sensiSemCongelamentoActive", "cleanActive"] as const) {
     if (patch[field] !== undefined) row[field] = patch[field];
   }
-  return normalizeKey(await mockRequest<Record<string, unknown>>(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(row) }));
+  return normalizeKey(await mockRequest<RawRecord>(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(row) }));
 }
 
 export async function createKey(input: { username: string; type: string; expire: number }) {
@@ -178,7 +341,7 @@ export async function createKey(input: { username: string; type: string; expire:
     sensiSemCongelamentoActive: false,
     cleanActive: false,
   };
-  return normalizeKey(await mockRequest<Record<string, unknown>>("", { method: "POST", body: JSON.stringify(value) }));
+  return normalizeKey(await mockRequest<RawRecord>("", { method: "POST", body: JSON.stringify(value) }));
 }
 
 export async function deleteKey(id: string) {

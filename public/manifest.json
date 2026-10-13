@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "PURPOU AUXÍLIO DE MIRA",
   "short_name": "PURPOU AUXÍLIO",
   "description": "Painel PWA de acesso e auxílio de mira da PURPOU.",
@@ -9,7 +10,8 @@
   "theme_color": "#08060d",
   "orientation": "portrait",
   "icons": [
-    { "src": "https://picsum.photos/seed/purpou192/192/192", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "https://picsum.photos/seed/purpou512/512/512", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/icons/purpou-crown-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/purpou-crown-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/purpou-crown-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

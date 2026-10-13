@@ -7,6 +7,13 @@ export const metadata: Metadata = {
   description: "Painel PWA de acesso e auxílio de mira da PURPOU.",
   manifest: "/manifest.json",
   applicationName: "PURPOU AUXÍLIO DE MIRA",
+  icons: {
+    icon: [
+      { url: "/icons/purpou-crown-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/purpou-crown-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/purpou-crown-180.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "PURPOU AUXÍLIO" },
 };
 export const viewport: Viewport = { themeColor: "#08060d", width: "device-width", initialScale: 1, maximumScale: 1, userScalable: false };

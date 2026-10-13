@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSessionToken, expiryForActivation, hasSessionSecret, listKeys, safeEqual, setSessionCookie, updateKey } from "@/lib/rbxis-server";
+import { createSessionToken, expiryForActivation, getClientIp, hasSessionSecret, listKeys, registerAdminLogin, safeEqual, setSessionCookie, updateKey } from "@/lib/rbxis-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,8 +15,10 @@ export async function POST(request: NextRequest) {
       const adminKey = process.env.RBXIS_ADMIN_KEY?.trim();
       if (!adminKey) return NextResponse.json({ message: "RBXIS_ADMIN_KEY não configurado." }, { status: 503 });
       if (!safeEqual(input, adminKey)) return NextResponse.json({ message: "Chave administrativa inválida." }, { status: 401 });
+      const ip = getClientIp(request);
+      if (!(await registerAdminLogin(ip))) return NextResponse.json({ message: "Este IP foi bloqueado pelo administrador." }, { status: 403 });
       const response = NextResponse.json({ success: true, role: "admin", username: "Administrador" });
-      setSessionCookie(response, createSessionToken({ role: "admin", username: "Administrador" }));
+      setSessionCookie(response, createSessionToken({ role: "admin", username: "Administrador", adminIp: ip }));
       return response;
     }
 

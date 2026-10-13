@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteKey, getKeyById, sessionFromRequest, updateKey } from "@/lib/rbxis-server";
+import { deleteKey, getKeyById, hasAuthorizedAdminSession, updateKey } from "@/lib/rbxis-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string }> };
-function isAdmin(request: NextRequest) {
-  return sessionFromRequest(request)?.role === "admin";
+async function isAdmin(request: NextRequest) {
+  return hasAuthorizedAdminSession(request);
 }
 
 export async function PATCH(request: NextRequest, context: Context) {
-  if (!isAdmin(request)) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
+  if (!(await isAdmin(request))) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
   try {
     const { id } = await context.params;
     const existing = await getKeyById(id);
@@ -35,7 +35,7 @@ export async function PATCH(request: NextRequest, context: Context) {
 }
 
 export async function DELETE(request: NextRequest, context: Context) {
-  if (!isAdmin(request)) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
+  if (!(await isAdmin(request))) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
   try {
     const { id } = await context.params;
     const existing = await getKeyById(id);

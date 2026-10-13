@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createKey, planTitle, sessionFromRequest, listKeys } from "@/lib/rbxis-server";
+import { createKey, hasAuthorizedAdminSession, planTitle, listKeys } from "@/lib/rbxis-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function isAdmin(request: NextRequest) {
-  return sessionFromRequest(request)?.role === "admin";
+async function isAdmin(request: NextRequest) {
+  return hasAuthorizedAdminSession(request);
 }
 
 export async function GET(request: NextRequest) {
-  if (!isAdmin(request)) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
+  if (!(await isAdmin(request))) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
   try {
     const keys = await listKeys();
     const sorted = keys.sort((a, b) => b.createdAt - a.createdAt);
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!isAdmin(request)) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
+  if (!(await isAdmin(request))) return NextResponse.json({ message: "Sessão administrativa necessária." }, { status: 401 });
   try {
     const body = await request.json().catch(() => ({}));
     const username = typeof body?.username === "string" ? body.username.trim().slice(0, 60) : "";

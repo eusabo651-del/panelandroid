@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { clearSessionCookie, getKeyById, isExpired, sessionFromRequest, setSessionCookie } from "@/lib/rbxis-server";
+import { clearSessionCookie, getKeyById, isAdminIpAllowed, isExpired, sessionFromRequest, setSessionCookie } from "@/lib/rbxis-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,7 +7,15 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const session = sessionFromRequest(request);
   if (!session) return NextResponse.json({ user: null }, { status: 200 });
-  if (session.role === "admin") return NextResponse.json({ user: { role: "admin", username: session.username ?? "Administrador" } });
+  if (session.role === "admin") {
+    try {
+      if (!session.adminIp || !(await isAdminIpAllowed(session.adminIp))) return invalidate();
+      return NextResponse.json({ user: { role: "admin", username: session.username ?? "Administrador" } });
+    } catch (error) {
+      console.error("Falha ao verificar IP administrativo:", error);
+      return NextResponse.json({ message: "Não foi possível validar o acesso administrativo." }, { status: 502 });
+    }
+  }
   if (!session.licenseId) return invalidate();
 
   try {
@@ -16,8 +24,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ user: {
       role: "user",
       username: license.username,
+      key: license.key,
       planId: license.type,
       expiresAt: license.expiresAt,
+      createdAt: license.createdAt,
+      activatedAt: license.activatedAt,
+      status: license.status,
       deviceId: license.device,
       features: {
         removerTremedeiraActive: license.removerTremedeiraActive,
