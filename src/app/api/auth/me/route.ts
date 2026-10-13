@@ -19,6 +19,12 @@ export async function GET(request: NextRequest) {
       planId: license.type,
       expiresAt: license.expiresAt,
       deviceId: license.device,
+      features: {
+        removerTremedeiraActive: license.removerTremedeiraActive,
+        estabilizarMiraActive: license.estabilizarMiraActive,
+        sensiSemCongelamentoActive: license.sensiSemCongelamentoActive,
+        cleanActive: license.cleanActive,
+      },
     } });
   } catch (error) {
     console.error("Falha ao consultar sessão:", error);

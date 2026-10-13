@@ -9,6 +9,7 @@ Aplicação PWA em Next.js com validação de keys no servidor e painel administ
 - A opção **Acesso administrativo** autentica a área `/admin` com a variável privada `RBXIS_ADMIN_KEY`.
 - A sessão é mantida em cookie `HttpOnly`, assinado no servidor usando `RBXIS_SESSION_SECRET`.
 - O painel admin cria, lista, bloqueia/reativa, desvincula e exclui registros da mesma coleção.
+- Os módulos da tela original (`Remover Tremedeira`, `Estabilizar Mira`, `Sensi Sem Congelamento` e `Clean`) persistem seus flags no registro da key.
 
 ## Variáveis de ambiente
 

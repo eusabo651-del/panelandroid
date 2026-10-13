@@ -23,6 +23,10 @@ export type MockKey = {
   expiresAt: number;
   status: "active" | "revoked" | "blocked";
   onlineAt: number;
+  removerTremedeiraActive: boolean;
+  estabilizarMiraActive: boolean;
+  sensiSemCongelamentoActive: boolean;
+  cleanActive: boolean;
 };
 
 export const SESSION_COOKIE = "rbxis_session_v3";
@@ -122,6 +126,10 @@ export function normalizeKey(row: Record<string, unknown>): MockKey {
     expiresAt: toNumber(row.expiresAt),
     status,
     onlineAt: toNumber(row.onlineAt),
+    removerTremedeiraActive: Boolean(row.removerTremedeiraActive),
+    estabilizarMiraActive: Boolean(row.estabilizarMiraActive),
+    sensiSemCongelamentoActive: Boolean(row.sensiSemCongelamentoActive),
+    cleanActive: Boolean(row.cleanActive),
   };
 }
 
@@ -145,7 +153,7 @@ export async function getKeyById(id: string) {
 
 export async function updateKey(id: string, patch: Partial<MockKey>) {
   const row: Record<string, unknown> = {};
-  for (const field of ["key", "username", "used", "device", "expire", "type", "createdAt", "activatedAt", "expiresAt", "status", "onlineAt"] as const) {
+  for (const field of ["key", "username", "used", "device", "expire", "type", "createdAt", "activatedAt", "expiresAt", "status", "onlineAt", "removerTremedeiraActive", "estabilizarMiraActive", "sensiSemCongelamentoActive", "cleanActive"] as const) {
     if (patch[field] !== undefined) row[field] = patch[field];
   }
   return normalizeKey(await mockRequest<Record<string, unknown>>(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(row) }));
@@ -165,6 +173,10 @@ export async function createKey(input: { username: string; type: string; expire:
     expiresAt: 0,
     status: "active",
     onlineAt: 0,
+    removerTremedeiraActive: false,
+    estabilizarMiraActive: false,
+    sensiSemCongelamentoActive: false,
+    cleanActive: false,
   };
   return normalizeKey(await mockRequest<Record<string, unknown>>("", { method: "POST", body: JSON.stringify(value) }));
 }
