@@ -172,7 +172,13 @@ async function listRawRecords(): Promise<RawRecord[]> {
 }
 
 async function findRawRecord(key: string) {
-  const matches = await mockRequest<RawRecord[]>(`?key=${encodeURIComponent(key)}`);
+  let matches: RawRecord[];
+  try {
+    matches = await mockRequest<RawRecord[]>(`?key=${encodeURIComponent(key)}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("MockAPI respondeu 404")) return undefined;
+    throw error;
+  }
   if (!Array.isArray(matches)) throw new Error("Resposta inesperada da MockAPI.");
   return matches.find((record) => record.key === key);
 }
