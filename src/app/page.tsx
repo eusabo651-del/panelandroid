@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, KeyRound, LockKeyhole, ShieldCheck, Wifi, X, MessagesSquare } from "lucide-react";
 import { GlobalAnnouncement } from "@/components/GlobalAnnouncement";
@@ -20,6 +20,27 @@ export default function LoginPage() {
   const [key, setKey] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [restoringSession, setRestoringSession] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function restoreSession() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store", credentials: "same-origin" });
+        const result = await response.json().catch(() => ({}));
+        if (!mounted) return;
+        if (response.ok && result.user) {
+          router.replace(result.user.role === "admin" ? "/admin" : "/dashboard");
+          return;
+        }
+      } catch {
+        // Se não houver conexão, mantém disponível o formulário para tentar novamente.
+      }
+      if (mounted) setRestoringSession(false);
+    }
+    void restoreSession();
+    return () => { mounted = false; };
+  }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); setPending(true);
@@ -35,6 +56,10 @@ export default function LoginPage() {
       router.replace(adminMode ? "/admin" : "/dashboard");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Falha de conexão. Tente novamente."); }
     finally { setPending(false); }
+  }
+
+  if (restoringSession) {
+    return <main className="grid min-h-screen place-items-center bg-[#07060b] text-sm font-semibold tracking-[.2em] text-fuchsia-200" role="status">VALIDANDO SESSÃO...</main>;
   }
 
   return (
